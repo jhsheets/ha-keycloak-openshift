@@ -33,9 +33,9 @@ Create a security context for MSSQL to run properly
 > oc create -f .\mssql_restrictedfsgroupscc.yaml
 > oc adm policy add-scc-to-group restrictedfsgroup system:serviceaccounts:ha-keycloak
 > ```
-> Note: you only have to run the above command once per OpenShift installation.
-> Running it multiple times if fine, it will just display an 'error' that this
-> already exists.
+> Note: if you see any *AlreadyExists* errors, you can safely ignore them.
+> Some of these settings only need to be created once per OpenShift setup, but it doesn't
+> hurt to try to recreate them.
 
 Setup containers
 > ```
@@ -62,7 +62,7 @@ Verify the cluster is setup
 > ```
 > If you see this error: 
 > ```
-> Error from server (BadRequest): container "cluster-test" in pod "cluster-test-d6b555fd8-wcwss" is waiting to start: PodInitializing
+> Error from server (BadRequest): container "cluster-test" in pod "cluster-test-xxx" is waiting to start: PodInitializing
 > ```
 > then just wait a minute and try again
 > 

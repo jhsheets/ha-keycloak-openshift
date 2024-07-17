@@ -203,22 +203,17 @@ data:
 ---
 
 # Job to test that keycloak's cluster is properly set
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
   name: cluster-test
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: cluster-test
-  strategy:
-    type: Recreate
   template:
     metadata:
-      labels:
-        app: cluster-test
+      name: cluster-test
     spec:
+      # Don't restart this job if it fails
+      restartPolicy: Never
       initContainers:
       # This 'init container' will block our main container from launching
       # until both of our keycloak pods are up and running.
@@ -276,7 +271,6 @@ spec:
           
           /usr/local/bin/keycloak_cluster_test.sh
           
-          sleep 86400s
       volumes:
       # Make the config-map called 'cluster-test-config' available as a volume 
       # called 'test-script'
