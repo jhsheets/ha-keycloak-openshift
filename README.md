@@ -43,6 +43,13 @@ Run `crc setup` to create an OpenShift Local cluster VM on your machine.
 	> https://console-openshift-console.apps-crc.testing/
 
 
+# Run Examples
+
+Once you have OpenShift installed and running you can run the examples.
+
+Click on the links below to go into the example, and view the `README.md` file for how to run it.
+- [Keycloak 22.0.4 - Clustered by DNS_PING](/22.0.4_dns_ping/)
+
 
 # Understanding Keycloak Clustering
 

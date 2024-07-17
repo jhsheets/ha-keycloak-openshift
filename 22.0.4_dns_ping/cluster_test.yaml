@@ -1,0 +1,289 @@
+# Let us connect directly with keycloak statefulest pod 1 by the DNS name it makes
+# Note that we creat a 'headless service' for Keycloak that it uses for discovery.
+# However, I don't want my tests do have to do discovery. I just want to code it use
+# hard-coded DNS entries for each pod.
+apiVersion: v1
+kind: Service
+metadata:
+  # Create an internal DNS to this pod. DNS name is the same as the pod name.
+  name: keycloak-statefulset-0
+spec:
+  type: NodePort
+  ports:
+  - port: 8080
+    protocol: TCP
+  selector:
+    statefulset.kubernetes.io/pod-name: keycloak-statefulset-0
+---
+
+# Let us connect directly with keycloak statefulest pod 1 by the DNS name it makes
+# Note that we creat a 'headless service' for Keycloak that it uses for discovery.
+# However, I don't want my tests do have to do discovery. I just want to code it use
+# hard-coded DNS entries for each pod.
+apiVersion: v1
+kind: Service
+metadata:
+  # Create an internal DNS to this pod. DNS name is the same as the pod name.
+  name: keycloak-statefulset-1
+spec:
+  type: NodePort
+  ports:
+  - port: 8080
+    protocol: TCP
+  selector:
+    statefulset.kubernetes.io/pod-name: keycloak-statefulset-1
+---
+
+# Create a config map that has a script that will test both pods in our 
+# keycloak cluster to ensure they're properly configured
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-test-config
+data:
+  # https://httpie.io/docs/cli
+  # https://jqlang.github.io/jq/manual/
+  keycloak_cluster_test.sh: |
+    #!/bin/bash
+    
+    # NodePort Service names for the pods so we can connect directly to them individually
+    kcRoot1='keycloak-statefulset-0:8080'
+    kcRoot2='keycloak-statefulset-1:8080'
+    
+    # Return the access token
+    function getToken
+    {
+      local rootUrl="$1"
+      local tokenUrl="$rootUrl/realms/master/protocol/openid-connect/token"
+      
+      local response=$(					`#capture result to variable`
+        http -hd 						`#invoke httpie, capture headers to stderr, and 'download' to stderr ` \
+        --ignore-stdin                  `#must disable stdin for non-interactive sessions or it will error out` \
+        --form POST $tokenUrl 			`#post as x-form-urlencode to the token endpoint` \
+        client_id=admin-cli				`#set our client_id to the built-in keycloak admin client name` \
+        grant_type=password 			`#set oidc grant type to password` \
+        username=admin 					`#same as KEYCLOAK_ADMIN env var` \
+        password=admin 					`#same as KEYCLOAK_ADMIN_PASSWORD env var` \
+        2>&1) 							`#forward stderr to stdout so we capture both` \
+      
+      local status=$(
+        echo "$response"				`#read in our response` \
+        | grep HTTP/ 					`#grep out the line that starts with HTTP/ which has our status code in it` \
+        | cut -d ' ' -f 2)				`#cut the status code out from the rest of the line`
+      
+      # Ensure we received a valid status code
+      if [ "$status" != 200 ]; then
+        echo "ERROR: Error fetching JWT. Expected 200 status code, received ${status}; exiting" 
+        exit 1
+      fi
+      
+      local json=$(
+        echo "$response"				`#read in our response` \
+        | grep -oE '\{.*\}')			`#grep out the JSON object`
+      
+      # Extract the access token from the jwt object
+      local accessToken=$(jq -rn "$json|.access_token")
+      
+      # Return the access token
+      echo $accessToken
+    }
+    
+    # Return the ID for the AdminCli client
+    function getAdminCliId
+    {
+      local rootUrl="$1"
+      local accessToken="$2"
+      local clientsUrl="${rootUrl}/admin/realms/master/clients/"
+      
+      local response=$(
+        http -hd \
+        --ignore-stdin \
+        -a $accessToken \
+        -A bearer \
+        GET $clientsUrl \
+        2>&1)
+      
+      local status=$(
+        echo "$response" \
+        | grep HTTP/ \
+        | cut -d ' ' -f 2)
+      
+      if [ "$status" != 200 ]; then
+        echo "ERROR: Error fetching ID for adminCli. Expected 200 status code, received ${status}; exiting" 
+        exit 1
+      fi
+      
+      local json=$(
+        echo "$response" \
+        | grep -oE '\[.*\]')	`#grep out the JSON array`
+      
+      # Extract the ID from the response
+      local adminCliId=$(echo "$json" | jq -r '.[] | select(.clientId=="admin-cli").id')
+      
+      # Return the ID
+      echo $adminCliId
+    }
+    
+    # Return the number of logged in users/sessions
+    function getSessionCount
+    {
+      local rootUrl="$1"
+      local accessToken="$2"
+      local adminCliId="$3"
+      local sessionUrl="${rootUrl}/admin/realms/master/clients/${adminCliId}/session-count"
+      
+      local response=$(
+        http -hd \
+        --ignore-stdin \
+        -a $accessToken \
+        -A bearer \
+        GET $sessionUrl \
+        2>&1)
+        
+      local status=$(
+        echo "$response" \
+        | grep HTTP/ \
+        | cut -d ' ' -f 2)
+        
+      if [ "$status" != 200 ]; then
+        echo "ERROR: Error fetching session count. Expected 200 status code, received ${status}; exiting" 
+        exit 1
+      fi
+        
+      local json=$(
+        echo "$response" \
+        | grep -oE '\{.*\}')
+        
+      # Extract the count from the response
+      local count=$(echo "$json" | jq -r '.count')
+        
+      # Return the session count
+      echo $count
+    }
+    
+    echo "Connecting to first Keycloak instance: ${kcRoot1}"
+    
+    # Login to 1st pod and get the session count
+    accessToken=$(getToken "$kcRoot1");
+    echo "Token: $accessToken"
+    
+    adminCliId=$(getAdminCliId "$kcRoot1" "$accessToken")
+    echo "AdminCli ID: $adminCliId"
+    
+    count=$(getSessionCount "$kcRoot1" "$accessToken" "$adminCliId")
+    echo "Session count: $count"
+    
+    # Verify the session count is 1
+    if [ "$count" != 1 ]; then
+      echo "ERROR: Expected session count of 1, but found ${count}; exiting"
+      exit 1;
+    fi
+    
+    
+    echo "Connecting to second Keycloak instance: ${kcRoot2}"
+    
+    # Login to 1st pod and get the session count
+    accessToken=$(getToken "$kcRoot2");
+    echo "Token: $accessToken"
+    
+    adminCliId=$(getAdminCliId "$kcRoot2" "$accessToken")
+    echo "AdminCli ID: $adminCliId"
+    
+    count=$(getSessionCount "$kcRoot2" "$accessToken" "$adminCliId")
+    echo "Session count: $count"
+    
+    # Verify the session count is 2
+    if [ "$count" != 2 ]; then
+      echo "ERROR: Expected session count of 2, but found ${count}; exiting"
+      exit 1;
+    fi
+    
+    echo "SUCCESS: all tests passed"
+    
+---
+
+# Job to test that keycloak's cluster is properly set
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-test
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: cluster-test
+    spec:
+      initContainers:
+      # This 'init container' will block our main container from launching
+      # until both of our keycloak pods are up and running.
+      # Note that this tries to connect to each one through the NodePort service we setup below
+      # Per the keycloak docs, the best way to check is to do a HEAD /health/read and see if it returns 200
+      - name: wait-for-keycloak
+        image: quay.io/wpernath/kustomize-ubi:v4.5.7
+        args:
+        - /bin/bash
+        - -c
+        - >
+          set -x;
+          while [[ "$(curl --head -s -o /dev/null -w ''%{http_code}'' http://keycloak-statefulset-0:8080/health/ready)" != "200" ]]; do
+            echo 'Waiting for keycloak-statefulset-0...'
+            sleep 4;
+          done
+
+          while [[ "$(curl --head -s -o /dev/null -w ''%{http_code}'' http://keycloak-statefulset-1:8080/health/ready)" != "200" ]]; do
+            echo 'Waiting for keycloak-statefulset-1...'
+            sleep 4;
+          done
+      # When you mount a configmap to a volume, it's read-only
+      # but we need to make the file executable, so it will run
+      # To work around this, we'll copy the file from the config map
+      # to another empty volume, which is writable
+      - name: copy-configmap
+        image: quay.io/wpernath/kustomize-ubi:v4.5.7
+        command: ["bash", "-c", "cp /orig/keycloak_cluster_test.sh /writable/"]
+        volumeMounts:
+          - name: test-script
+            mountPath: /orig
+          - name: writable-test-script
+            mountPath: /writable
+      # Load a container that has some executables on it (httpie, jq, etc) 
+      # that can execute our above bash script to test our keycloak cluster
+      # Once the script finishes, it will shutdown
+      containers:
+      - name: cluster-test
+        image: quay.io/wpernath/kustomize-ubi:v4.5.7
+        # Mount the volume called 'writable-test-script' and get just 
+        # 'keycloak_cluster_test.sh' file and mount it to 
+        # '/usr/local/bin/keycloak_cluster_test.sh'
+        volumeMounts:
+        - name: writable-test-script
+          #mountPath: /usr/test
+          mountPath: /usr/local/bin/keycloak_cluster_test.sh
+          subPath: keycloak_cluster_test.sh
+          readOnly: false
+        # Execute the mounted script, then sleep for 24 hours
+        args:
+        - /bin/bash
+        - -c
+        - >
+          chmod +x /usr/local/bin/keycloak_cluster_test.sh
+          
+          /usr/local/bin/keycloak_cluster_test.sh
+          
+          sleep 86400s
+      volumes:
+      # Make the config-map called 'cluster-test-config' available as a volume 
+      # called 'test-script'
+      - name: test-script
+        configMap: 
+          name: cluster-test-config
+      # Configmaps aren't writable/executable, so we need to copy it to here
+      - name: writable-test-script
+        emptydir: {}
+          

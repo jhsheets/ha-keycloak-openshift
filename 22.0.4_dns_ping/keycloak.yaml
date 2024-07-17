@@ -1,0 +1,280 @@
+# An Infinispan configuration file for keycloak
+#
+# The reason to create our own is so that we can update the 'owners' count.
+# I've also enabled statistics for the distributed caches to be enabled
+# so they're accessible when accessing keycloak's /metrics endpoint
+#
+# Owners controls how many copies of cached data will be kept across all 
+# clustered keycloak instances. More copies = slower but safer.
+# If you set this low, and the instances with the cached data all
+# crash/disconnect, then that data is 'lost'.
+# Don't set higher than the number of running keycloak replicas.
+#
+# Keycloak's default cache-ispn.xml sets this to 2, so if you don't want
+# to change it, and you don't want to enable statistics, you don't need to
+# supply this file
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-config
+data:
+  cache-ispn.xml: |-
+    <?xml version="1.0" encoding="UTF-8"?>
+    <infinispan
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="urn:infinispan:config:14.0 http://www.infinispan.org/schemas/infinispan-config-14.0.xsd"
+            xmlns="urn:infinispan:config:14.0">
+    
+        <cache-container name="keycloak">
+            <transport lock-timeout="60000"/>
+            <local-cache name="realms" simple-cache="true">
+                <encoding>
+                    <key media-type="application/x-java-object"/>
+                    <value media-type="application/x-java-object"/>
+                </encoding>
+                <memory max-count="10000"/>
+            </local-cache>
+            <local-cache name="users" simple-cache="true">
+                <encoding>
+                    <key media-type="application/x-java-object"/>
+                    <value media-type="application/x-java-object"/>
+                </encoding>
+                <memory max-count="10000"/>
+            </local-cache>
+            <distributed-cache name="sessions" owners="2" statistics="true">
+                <expiration lifespan="-1"/>
+            </distributed-cache>
+            <distributed-cache name="authenticationSessions" owners="2" statistics="true">
+                <expiration lifespan="-1"/>
+            </distributed-cache>
+            <distributed-cache name="offlineSessions" owners="2" statistics="true">
+                <expiration lifespan="-1"/>
+            </distributed-cache>
+            <distributed-cache name="clientSessions" owners="2" statistics="true">
+                <expiration lifespan="-1"/>
+            </distributed-cache>
+            <distributed-cache name="offlineClientSessions" owners="2" statistics="true">
+                <expiration lifespan="-1"/>
+            </distributed-cache>
+            <distributed-cache name="loginFailures" owners="2" statistics="true">
+                <expiration lifespan="-1"/>
+            </distributed-cache>
+            <local-cache name="authorization" simple-cache="true">
+                <encoding>
+                    <key media-type="application/x-java-object"/>
+                    <value media-type="application/x-java-object"/>
+                </encoding>
+                <memory max-count="10000"/>
+            </local-cache>
+            <replicated-cache name="work">
+                <expiration lifespan="-1"/>
+            </replicated-cache>
+            <local-cache name="keys" simple-cache="true">
+                <encoding>
+                    <key media-type="application/x-java-object"/>
+                    <value media-type="application/x-java-object"/>
+                </encoding>
+                <expiration max-idle="3600000"/>
+                <memory max-count="1000"/>
+            </local-cache>
+            <distributed-cache name="actionTokens" owners="2">
+                <encoding>
+                    <key media-type="application/x-java-object"/>
+                    <value media-type="application/x-java-object"/>
+                </encoding>
+                <expiration max-idle="-1" lifespan="-1" interval="300000"/>
+                <memory max-count="-1"/>
+            </distributed-cache>
+        </cache-container>
+    </infinispan>
+---
+
+# Create a stateful set, which will create two instances (pods) of Keycloak
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keycloak-statefulset
+  labels:
+    app: keycloak
+spec:
+  # The number of instances (pods) of keycloak to create.
+  # Since this is a stateful set, each pod is name <metadata.name>-<podNumber>
+  # Ex: keycloak-statefulset-0, keycloak-statefulset-1
+  # If you change this, you may want to change the `owners="2"` settings in cache-ispn.xml
+  replicas: 2
+  serviceName: keycloak-set
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      # This script will auto-create a MSSQL database for keycloak if missing
+      # before we attempt to start keycloak
+      initContainers:
+        - name: keycloak-db-setup
+          image: mcr.microsoft.com/mssql-tools
+          command: 
+            - sh
+            - -c
+            - |
+              until /opt/mssql-tools/bin/sqlcmd -S mssql-service -U sa -P "Password!23" -Q "create database keycloak"; do sleep 5; done
+      volumes:
+        - name: keycloak-config
+          configMap:
+            name: keycloak-config
+      # Create our keycloak instances
+      containers:
+        - name: keycloak
+          imagePullPolicy: IfNotPresent
+          image: quay.io/keycloak/keycloak:22.0.4
+          volumeMounts:
+            - name: keycloak-config 
+              mountPath: /opt/keycloak/conf
+          env:
+            - name: KEYCLOAK_ADMIN
+              value: 'admin'
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: 'admin'
+            # Enable /health/ready and /health/live endpoints
+            - name: KC_HEALTH_ENABLED
+              value: 'true'
+            # Enable /metrics endpoint
+            - name: KC_METRICS_ENABLED
+              value: 'true'
+            # Required for certain cache metrics to be displayed, such as:
+            # vendor_cache_manager_keycloak_cache_sessions_statistics_required_minimum_number_of_nodes
+            - name: KC_CACHE_METRICS_HISTOGRAMS_ENABLED
+              value: 'true'
+            - name: KC_PROXY
+              value: 'edge'
+            # Disable strict hostname setting so our cluster_test will be able to connect to each
+            # keycloak pod directly
+            - name: KC_HOSTNAME_STRICT
+              value: 'false'
+            # If you set KC_HTTP_RELATIVE_PATH then you need to also set the Route's path to match,
+            # modify the probe paths, and modify the cluster_test.yaml file's bash script to also have this path
+            #- name: KC_HTTP_RELATIVE_PATH
+            #  value: '/auth'
+            - name: KC_DB
+              value: 'mssql'
+            - name: KC_DB_URL
+              value: >-
+                jdbc:sqlserver://mssql-service:1433;databaseName=keycloak;encrypt=false
+            - name: KC_DB_USERNAME
+              value: 'sa'
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mssql
+                  key: SA_PASSWORD 
+            # Must disable for mssql
+            - name: KC_TRANSACTION_XA_ENABLED
+              value: 'false'
+            # Configure keycloak to ping the OpenShift/kubernetes headless service DNS
+            - name: KC_CACHE_STACK
+              value: 'kubernetes'
+            # Set our headless service DNS name to ping
+            # Format is <service_name>.<cluster_name>.svc.cluster.local
+            # https://github.com/keycloak/keycloak/discussions/10210
+            - name: JAVA_OPTS_APPEND
+              value: '-Djgroups.dns.query=keycloak-headless.ha-keycloak.svc.cluster.local'
+            # Enable debug logging for JGroups, which is what Keycloak uses for clustering
+            - name: KC_LOG_LEVEL
+              value: 'INFO,org.infinispan:DEBUG,org.jgroups:DEBUG'
+            # We must explicitly tell Keycloak to use our custom cache file.
+            # Path is relative to the /opt/keycloak/cache folder.
+            # Note: if we built a custom Dockerfile, and overrode the default 
+            # cache-ispn.xml file then this probably wouldn't be necessary.
+            - name: KC_CACHE_CONFIG_FILE
+              value: 'cache-ispn.xml'
+          ports:
+            - containerPort: 8080
+          # We're going to use 'start', instead of 'start-dev'
+          # This should automatically trigger a new 'build' if necessary.
+          # If we wanted to run 'start --optimized' we'd probably need to create
+          # a Dockerfile, as some of the keywords we're using (ex: KC_DB)
+          # appear to be 'build-time' configuration settings.
+          # We might not be able to mount the cache-ispn.xml file either,
+          # so that may need to be part of the Dockerfile, which means the
+          # number of 'owners' would have to be set at compile time as well.
+          args: ["start"]
+          # Setup probes
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            successThreshold: 1
+            failureThreshold: 3
+            periodSeconds: 30
+            timeoutSeconds: 2
+            initialDelaySeconds: 25
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            successThreshold: 1
+            failureThreshold: 3
+            periodSeconds: 10
+            timeoutSeconds: 2
+            initialDelaySeconds: 30
+---
+
+# Create a service so we can connect to keycloak on port 8080
+# This will create a load-balancer in front of all keycloak instances, 
+# and accessing Keycloak through this service will direct us to one of 
+# our instances.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-service
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+
+# Create a DNS entry that will route traffic to our keycloak instances,
+# allowing us to connect to keycloak from outside the openshift cluster.
+# This will work as a load balancer, so there's no telling which one of
+# the two instances of keycloak we'll get.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: keycloak-route
+spec:
+  # DNS name that we can use externally to access keycloak
+  host: ha-keycloak.apps-crc.testing
+  path: /
+  to:
+    kind: Service
+    name: keycloak-service
+  port:
+    targetPort: 8080
+  wildcardPolicy: None
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Allow
+---
+
+# Create a 'headless service' that will create a DNS record with each Keycloak
+# pod's IP address in it. This will allow any pod running in the same kubernetes
+# namespace to connect directly to invididual keycloak pods by their IP address.
+# https://kubernetes.io/docs/concepts/services-networking/service/#headless-services
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-headless
+spec:
+  # Setting the cluster IP to none makes this a headless service
+  clusterIP: None
+  selector:
+    app: keycloak
+  ports:
+    - port: 8080
+      targetPort: 8080
