@@ -208,6 +208,8 @@ kind: Job
 metadata:
   name: cluster-test
 spec:
+  # Treat 1st failure as failed
+  backoffLimit: 0
   template:
     metadata:
       name: cluster-test
