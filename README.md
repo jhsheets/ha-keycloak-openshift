@@ -49,6 +49,7 @@ Once you have OpenShift installed and running you can run the examples.
 
 Click on the links below to go into the example, and view the `README.md` file for how to run it.
 - [Keycloak 22.0.4 - Clustered by DNS_PING](/22.0.4_dns_ping/)
+- [Keycloak 22.0.4 - Not Clustered](/22.0.4_not_clustered/)
 
 
 # Understanding Keycloak Clustering
