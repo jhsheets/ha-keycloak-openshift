@@ -1,21 +1,21 @@
 # Overview
 This is an example of deploying multiple instances of Keycloak in a high-availability cluster 
-to an Red Hat OpenShift kubernetes environment.
+to a Red Hat OpenShift kubernetes environment.
 
 
 # Setup OpenShift
 
-This example uses RedHat OpenShift 4.x as a kubernetes backend.
+This example uses Red Hat OpenShift 4.x as a kubernetes backend.
 
-For testing purposes, I'll be using a RedHat OpenShift Local setup on my own machine
-to make it easy to follow.
+To make it easier to run, I will use Red Hat OpenShift Local, which anyone can setup and
+run for development purposes.
 
-If you wish to run this on a production OpenShift cluster, you'll need to use the correct
-URLs and logins to your cluster, but everything should work.
+> OpenShift Local is the new name for what was previously called CodeReady Containers.
+
 
 ## Download 
-I'm using RedHat's OpenShift Local 2.x, which is a single-node cluster
-version of OpenShift 4.x, which can be used for local development and testing. 
+I'm using RedHat's OpenShift Local 2.x, which is a single-node cluster version of OpenShift 4.x. 
+> Tested with OpenShift Local version 2.32 which installs OpenShift version 4.14.8
 
 OpenShift Local runs on Linux, Windows and MacOS.
 
@@ -55,14 +55,20 @@ Click on the links below to go into the example, and view the `README.md` file f
 # Understanding Keycloak Clustering
 
 When you have multiple instances of Keycloak running, you must point them all to use the same database.
-This is where most of Keycloak's information is stored in the database; 
-your realm settings, users, clients, etc.
+This is where most of Keycloak's information is stored, such as your realm settings, users, clients, etc.
+Setting up an external database (instead of the default, embedded H2 database) and pointing all of your
+Keycloak instances to use it is all you need to do in this regard, and takes little thought or work.
 
-However, some information is stored in caches, such as user sessions. 
-If you were to login to one instance of keycloak - which creates your session - and then get directed 
-to another instance that doesn't know about your session, it wouldn't know you've authenticated, and 
-it would prompt you to re-authenticate. To solve this, we must synchronize the necssary cache data
-between instances.
+However, some information is stored in caches. Some of these caches are just local copies of data in
+your database, but other caches store state, such as session information created when a user logs in.
+
+Without sharing this information between instances of Keyloak, your session information won't be shared,
+and logging into one instance of Keycloak wouldn't mean that other instances would know you've 
+authenticated. This could cause a variety of issues.
+
+To solve this, we must setup Keycloak so that it can discover it's other instances, and share the
+appropriate caches. Furthermore, we also need to consider the number of times the cached data should
+be copied to allow for fault tolerance.
 
 Keycloak uses [Infinispan](https://infinispan.org/) for caching, which in turn uses 
 [JGroups](http://www.jgroups.org/) which is a Java library for clustering. By using Infinispan, 
