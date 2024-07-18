@@ -125,9 +125,9 @@ influence potential data loss
 |---------|-------|------------|-------------|
 |1        |1      |1           |Any node loss will result in data loss|
 |2        |1      |2           |Data not copied. Any node loss will result in data loss|
-|2        |2      |2           |Data copied to 2 nodes. Can lose 1 node w/o data loss|
-|3        |1      |3           |Data copied to 2 nodes. Can lose 1 node w/o data loss|
-|3        |2      |2           |Data not copied. Any node loss will result in data loss|
+|2        |2      |1           |Data copied to 2 nodes. Can lose 1 node w/o data loss|
+|3        |1      |3           |Data not copied. Any node loss will result in data loss|
+|3        |2      |2           |Data copied to 2 nodes. Can lose 1 node w/o data loss|
 |3        |3      |1           |Data copied to 3 nodes. Can lose 2 nodes w/o data loss|
 
 The 'Minimum Nodes' is the minimum number of required nodes that must be running to prevent data loss.
